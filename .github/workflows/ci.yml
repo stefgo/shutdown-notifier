@@ -1,0 +1,98 @@
+name: Check Code
+
+# Runs on every branch and pull request. build.yml calls this same workflow via
+# workflow_call, so the image build is gated by exactly these checks -- no
+# second copy that could drift.
+on:
+    # main and dev are covered by build.yml, which calls this workflow itself --
+    # listing them here too would run the checks twice for every push.
+    push:
+        branches-ignore: ["main", "dev"]
+    pull_request:
+    workflow_call:
+
+# Three pushes in a row to a topic branch make the first two runs pointless.
+# github.workflow is the *caller's* name when this workflow is reached through
+# workflow_call, so a build.yml or release.yml run lands in its own group and cannot cancel -- or
+# be cancelled by -- a plain branch run of these checks. A tag is never cancelled,
+# the same rule build.yml applies to itself.
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+    verify:
+        name: Typecheck and test
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                  # commitlint needs the commit range of a pull request.
+                  fetch-depth: 0
+
+            # cleanup-packages.yml names the images it prunes one by one. The action
+            # can discover them by wildcard, but only with a classic PAT carrying
+            # delete:packages -- an unattended nightly delete right on every container
+            # of the account, and a credential that expires. The explicit list is the
+            # cheaper trade, and this step keeps it from going stale: an image added to
+            # build.yml but not to the cleanup would never be pruned or protected, and
+            # nothing else would turn red.
+            - name: Cleanup covers every published image
+              run: |
+                  published=$(grep -oE '/shutdown-[a-z0-9-]+' .github/workflows/build.yml | tr -d / | sort -u)
+                  covered=$(sed -n 's/^ *packages: *//p' .github/workflows/cleanup-packages.yml \
+                      | tr ',' '\n' | tr -d ' ' | grep -E '^shutdown-' | sort -u)
+                  if [ -z "$published" ]; then
+                      echo "::error::No image names found in build.yml -- the pattern above is out of date"
+                      exit 1
+                  fi
+                  missing=$(comm -23 <(echo "$published") <(echo "$covered"))
+                  if [ -n "$missing" ]; then
+                      echo "::error::Published but not pruned by cleanup-packages.yml: $(tr '\n' ' ' <<< "$missing")"
+                      exit 1
+                  fi
+                  echo "Covered: $(tr '\n' ' ' <<< "$covered")"
+
+            - name: Set up Node
+              uses: actions/setup-node@v7
+              with:
+                  # .nvmrc matches the node:22 base image used by the Dockerfile.
+                  node-version-file: .nvmrc
+                  cache: npm
+
+            # Node 22 ships npm 10, the lockfile is written with npm 11, and the two do
+            # not always agree about optional peers -- npm ci can then fail under the
+            # version that did not write the lockfile. packageManager in package.json
+            # is the single source of the version.
+            - name: Pin npm
+              run: npm i -g "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+
+            - name: Install dependencies
+              run: npm ci
+
+            # The commit message is the only input semantic-release derives the next
+            # version from. Locally .githooks/commit-msg checks it; this step covers
+            # the commits of a pull request, which never passed through that hook.
+            - name: Commit messages
+              if: github.event_name == 'pull_request'
+              env:
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+
+            # What the Dockerfile runs too: tsc over src, without the tests.
+            - name: Build
+              run: npm run build
+
+            - name: Test
+              run: npm test
+
+            # The build above leaves the tests out (tsconfig.build.json), so they do not
+            # end up in dist -- and Vitest strips types without checking them. This is
+            # what checks them.
+            - name: Typecheck
+              run: npm run typecheck

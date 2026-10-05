@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Only the two long-lived branches may be pushed; topic branches stay local.
+#
+# Both publish a rolling image (build.yml); a pushed topic branch would only run
+# the checks and then wait for a pull request nobody opens.
+current_branch=$(git symbolic-ref --short HEAD)
+
+case "$current_branch" in
+    main|dev)
+        exit 0
+        ;;
+    *)
+        echo "❌ Push is only allowed from 'main' or 'dev' (current branch: '$current_branch')."
+        exit 1
+        ;;
+esac

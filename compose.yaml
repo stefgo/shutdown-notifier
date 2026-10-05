@@ -1,0 +1,24 @@
+services:
+  shutdown-notifier:
+    container_name: shutdown-notifier
+    build: .
+    image: shutdown-notifier
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Europe/Berlin}
+      - SHUTDOWN_NOTIFY_URL=${SHUTDOWN_NOTIFY_URL:-}
+      - SHUTDOWN_NOTIFY_HEADERS=${SHUTDOWN_NOTIFY_HEADERS:-}
+      - SHUTDOWN_NOTIFY_TIMEOUT=${SHUTDOWN_NOTIFY_TIMEOUT:-10}
+      - SHUTDOWN_NOTIFY_DELAY=${SHUTDOWN_NOTIFY_DELAY:-3}
+      - SHUTDOWN_REMEMBER_TIME=${SHUTDOWN_REMEMBER_TIME:-300}
+      - SHUTDOWN_POLL_INTERVAL=${SHUTDOWN_POLL_INTERVAL:-60}
+      - SHUTDOWN_MONITOR_PATH=${SHUTDOWN_MONITOR_PATH:-/run/systemd/shutdown}
+      - SHUTDOWN_MONITOR_FILE=${SHUTDOWN_MONITOR_FILE:-scheduled}
+      - SHUTDOWN_NOTIFY_TEMPLATE_FILE=${SHUTDOWN_NOTIFY_TEMPLATE_FILE:-/config/template.json}
+      # Inside a container the hostname is the container's; name the host here.
+      - SHUTDOWN_HOSTNAME=${SHUTDOWN_HOSTNAME:-}
+      - SHUTDOWN_LOG_LEVEL=${SHUTDOWN_LOG_LEVEL:-info}
+    volumes:
+      - /run/systemd/shutdown:/run/systemd/shutdown:ro
+      # A template of your own, in place of the one the image ships:
+      # - ./config/template.json:/config/template.json:ro

@@ -1,0 +1,28 @@
+{
+    "content": "@everyone",
+    "embeds": [
+        {
+            "title": {
+                "$if": "event.kind == 'shutdown.cancelled'",
+                "then": ":white_check_mark: {{event.title}} :white_check_mark:",
+                "else": ":warning: {{event.title}} :warning:"
+            },
+            "description": "{{event.wallMessage | default('')}}",
+            "color": { "$if": "event.kind == 'shutdown.cancelled'", "then": 8190976, "else": 16760576 },
+            "author": { "name": "Server Shutdown Notifier" },
+            "fields": [
+                { "name": "Host", "value": "{{host.name}}", "inline": false },
+                {
+                    "name": "Date",
+                    "value": {
+                        "$if": "event.scheduledAtLocal",
+                        "then": "{{event.scheduledAtLocal}}",
+                        "else": "{{event.occurredAtLocal}}"
+                    },
+                    "inline": false
+                },
+                { "$if": "event.mode", "then": { "name": "Mode", "value": "{{event.mode}}", "inline": false } }
+            ]
+        }
+    ]
+}

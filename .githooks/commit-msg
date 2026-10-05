@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# Checks the commit message against commitlint.config.mjs.
+#
+# It is activated by `core.hooksPath`, which the `prepare` script sets on every
+# `npm install`. ci.yml runs the same check on the commits of a pull request, which
+# never passed through this hook.
+npx --no -- commitlint --edit "$1"

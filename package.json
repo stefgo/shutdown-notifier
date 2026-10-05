@@ -1,0 +1,80 @@
+{
+    "name": "shutdown-notifier",
+    "version": "0.0.1",
+    "private": true,
+    "type": "module",
+    "main": "dist/index.js",
+    "engines": {
+        "node": ">=22"
+    },
+    "packageManager": "npm@11.12.1",
+    "scripts": {
+        "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
+        "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+        "build": "tsc -p tsconfig.build.json",
+        "start": "tsx src/index.ts",
+        "dev": "tsx watch src/index.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
+    "devDependencies": {
+        "@commitlint/cli": "^21.2.3",
+        "@commitlint/config-conventional": "^21.2.3",
+        "@semantic-release/changelog": "^6.0.3",
+        "@semantic-release/exec": "^7.1.0",
+        "@semantic-release/git": "^10.0.1",
+        "@semantic-release/github": "^11.0.6",
+        "@semantic-release/npm": "^13.2.0",
+        "@types/node": "^22.18.0",
+        "semantic-release": "^25.0.9",
+        "tsx": "^4.23.13",
+        "typescript": "^5.9.3",
+        "vitest": "^5.0.3"
+    },
+    "release": {
+        "branches": [
+            "main"
+        ],
+        "plugins": [
+            [
+                "@semantic-release/commit-analyzer",
+                {
+                    "releaseRules": [
+                        {
+                            "breaking": true,
+                            "release": "minor"
+                        }
+                    ]
+                }
+            ],
+            [
+                "@semantic-release/exec",
+                {
+                    "analyzeCommitsCmd": "test \"$FORCE_MAJOR\" = \"true\" && echo major || true",
+                    "successCmd": "echo \"tag=v${nextRelease.version}\" >> $GITHUB_OUTPUT"
+                }
+            ],
+            "@semantic-release/release-notes-generator",
+            "@semantic-release/changelog",
+            [
+                "@semantic-release/npm",
+                {
+                    "npmPublish": false
+                }
+            ],
+            [
+                "@semantic-release/git",
+                {
+                    "assets": [
+                        "package.json",
+                        "package-lock.json",
+                        "CHANGELOG.md"
+                    ],
+                    "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+                }
+            ],
+            "@semantic-release/github"
+        ]
+    }
+}

@@ -1,0 +1,313 @@
+# Builds and publishes the container image. Nothing is tagged until the image
+# has been started and has reported a shutdown. It creates no version
+# number -- that is release.yml alone, on request.
+name: Build Images
+
+on:
+    push:
+        # Both long-lived branches publish a rolling image: :main is the state
+        # released to everyone, :dev the one for developers. Neither creates a
+        # version. type=ref,event=branch below already yields the branch name as tag.
+        branches: ["main", "dev"]
+        # A release tag reaches this workflow through the workflow_dispatch that
+        # release.yml fires -- semantic-release pushes the tag over GITHUB_TOKEN, and
+        # such a push creates no workflow run. The filter covers a tag pushed by hand.
+        tags: ["v*.*.*"]
+        # A commit that only touches documentation or a sample changes nothing inside
+        # the image, so it need not be rebuilt. Path filters apply to branch pushes
+        # only -- neither a tag nor workflow_dispatch is affected.
+        paths-ignore:
+            - "samples/**"
+            - "**.md"
+    workflow_dispatch: # Allows manual trigger in the Actions tab, for any branch
+
+# A second push to the same branch makes the older build pointless. Tag builds are
+# never cancelled -- their image is the artefact of a release.
+concurrency:
+    group: build-${{ github.ref }}
+    cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# The registry is named once, here. The image name cannot join it: an `env` entry
+# cannot reference another entry of the same block, and a job's `env` cannot read
+# the `env` context at all -- only a step can. `prepare` therefore composes the
+# name in a `run:` step, and the jobs below take it from `needs`, which a job's
+# `env` does accept.
+env:
+    REGISTRY: ghcr.io
+
+jobs:
+    # Typecheck and test before anything is built. Reuses ci.yml rather than
+    # restating the steps, so the gate cannot drift from the branch checks.
+    verify:
+        uses: ./.github/workflows/ci.yml
+        permissions:
+            contents: read
+
+    # The single source of the image name.
+    prepare:
+        needs: verify
+        runs-on: ubuntu-latest
+        # Computes a string -- no checkout, no registry, no API. Stated rather than
+        # left to the repository default.
+        permissions: {}
+        outputs:
+            image: ${{ steps.image.outputs.image }}
+        steps:
+            - name: Determine the image name
+              id: image
+              run: echo "image=$REGISTRY/${{ github.repository_owner }}/shutdown-notifier" >> "$GITHUB_OUTPUT"
+
+    # The image ships as a real multi-arch manifest. Each architecture is built on a
+    # native runner and pushed **by digest and without a tag** -- tagging is the
+    # publish job's business, and that one runs after the smoke test.
+    build:
+        needs: prepare
+        runs-on: ${{ matrix.runner }}
+        permissions:
+            contents: read
+            packages: write
+
+        strategy:
+            fail-fast: false
+            matrix:
+                arch: [amd64, arm64]
+                include:
+                    - arch: amd64
+                      runner: ubuntu-latest
+                      platform: linux/amd64
+                    - arch: arm64
+                      runner: ubuntu-24.04-arm
+                      platform: linux/arm64
+
+        env:
+            IMAGE: ${{ needs.prepare.outputs.image }}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v4
+
+            - name: Log in to the Container registry
+              uses: docker/login-action@v4
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # Tags are attached by the publish job; here only the labels are needed.
+            # They carry the version and the revision -- the notifier itself knows
+            # neither, so nothing is baked into the image as a build argument.
+            - name: Extract Docker metadata
+              id: meta
+              uses: docker/metadata-action@v6
+              with:
+                  images: ${{ env.IMAGE }}
+
+            - name: Build and push by digest
+              id: build
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  file: ./Dockerfile
+                  platforms: ${{ matrix.platform }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  # One cache per architecture, or the two jobs would overwrite each
+                  # other's layers.
+                  cache-from: type=gha,scope=${{ matrix.arch }}
+                  cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+                  outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+            # The file name is the digest; the file itself stays empty. It is the
+            # cheapest way to hand a string from a matrix job to a later job --
+            # matrix jobs cannot each set an output of their own.
+            - name: Export digest
+              env:
+                  DIGEST: ${{ steps.build.outputs.digest }}
+              run: |
+                  mkdir -p /tmp/digests
+                  touch "/tmp/digests/${DIGEST#sha256:}"
+
+            - name: Upload digest
+              uses: actions/upload-artifact@v7
+              with:
+                  name: digests-${{ matrix.arch }}
+                  path: /tmp/digests/*
+                  if-no-files-found: error
+                  retention-days: 1
+
+    # Starts what was just built and has it do its work. The only place in the
+    # pipeline where the image is executed -- everything before proves that the code
+    # compiles, not that the result starts.
+    #
+    # It is a gate, not a report: nothing is tagged until it has passed, so `latest`
+    # can no longer come to mean an image that never started. Both architectures run
+    # natively, each against exactly the digest this run produced for it.
+    smoke:
+        name: Smoke test
+        needs: [prepare, build]
+        runs-on: ${{ matrix.runner }}
+        permissions:
+            contents: read
+            packages: read
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - arch: amd64
+                      runner: ubuntu-latest
+                    - arch: arm64
+                      runner: ubuntu-24.04-arm
+
+        env:
+            IMAGE: ${{ needs.prepare.outputs.image }}
+
+        steps:
+            - name: Log in to the Container registry
+              uses: docker/login-action@v4
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # There is no tag to pull yet, so the image is addressed by digest --
+            # more precise anyway: nothing is left for docker to choose.
+            - name: Download the digest for this architecture
+              uses: actions/download-artifact@v8
+              with:
+                  path: /tmp/digests
+                  pattern: digests-${{ matrix.arch }}
+
+            - name: Resolve the digest
+              env:
+                  ARCH: ${{ matrix.arch }}
+              run: |
+                  digest=$(basename /tmp/digests/digests-"$ARCH"/*)
+                  echo "IMAGE_REF=$IMAGE@sha256:$digest" >> "$GITHUB_ENV"
+
+            # The notifier has no health route to ask. --test renders a sample event
+            # with the template the image ships and prints the body; without a notify
+            # URL nothing is sent. A template the engine refuses ends it with 1.
+            - name: Render the shipped template
+              run: |
+                  for kind in scheduled reminder cancelled; do
+                      docker run --rm "$IMAGE_REF" dist/index.js --test "$kind" \
+                          | jq -e --arg kind "shutdown.$kind" '.level and (.tags | index($kind))' > /dev/null
+                      echo "shutdown.$kind rendered"
+                  done
+
+            # The other half: the process that stays. It watches a directory of the
+            # runner in place of /run/systemd/shutdown.
+            - name: Start the image
+              run: |
+                  mkdir -p /tmp/shutdown
+                  docker run -d --name shutdown-notifier-smoke \
+                      -e SHUTDOWN_NOTIFY_DELAY=1 \
+                      -v /tmp/shutdown:/run/systemd/shutdown:ro \
+                      "$IMAGE_REF"
+
+            - name: Wait for it to report a scheduled shutdown
+              run: |
+                  # waitfor <text>: reads the log until it carries the text.
+                  waitfor() {
+                    for i in $(seq 1 60); do
+                      if docker logs shutdown-notifier-smoke 2>&1 | grep -qF "$1"; then
+                        echo "\"$1\" after ${i}s"
+                        return 0
+                      fi
+                      # A container that already exited will never say it.
+                      if [ "$(docker inspect -f '{{.State.Running}}' shutdown-notifier-smoke)" != "true" ]; then
+                        echo "::error::the notifier is no longer running"
+                        return 1
+                      fi
+                      sleep 1
+                    done
+                    echo "::error::the notifier did not log \"$1\" within 60s"
+                    return 1
+                  }
+                  waitfor "Shutdown notifier started"
+
+                  # What logind writes for `shutdown -h +10`, and written the way logind
+                  # writes it: a new file renamed over the old name.
+                  printf 'USEC=%s000000\nWARN_WALL=1\nMODE=poweroff\n' "$(( $(date +%s) + 600 ))" > /tmp/shutdown/.scheduled
+                  mv /tmp/shutdown/.scheduled /tmp/shutdown/scheduled
+                  waitfor "Shutdown scheduled"
+
+            - name: Container logs
+              if: failure()
+              run: docker logs shutdown-notifier-smoke 2>&1 | tail -50
+
+            - name: Clean up
+              if: always()
+              run: docker rm -f shutdown-notifier-smoke 2>/dev/null || true
+
+    # Nothing above carries a tag: every job so far pushed by digest only. This is where
+    # a build becomes something a user can pull, and it runs **after** the smoke test.
+    #
+    # A build that fails the smoke test leaves its digests in the registry untagged; the
+    # nightly Prune Registry run sweeps them through delete-untagged.
+    publish:
+        name: Tag and publish
+        needs: [prepare, build, smoke]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        env:
+            IMAGE: ${{ needs.prepare.outputs.image }}
+
+        steps:
+            - name: Download digests
+              uses: actions/download-artifact@v8
+              with:
+                  path: /tmp/digests
+                  pattern: digests-*
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v4
+
+            - name: Log in to the Container registry
+              uses: docker/login-action@v4
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract Docker metadata
+              id: meta
+              uses: docker/metadata-action@v6
+              with:
+                  images: ${{ env.IMAGE }}
+                  tags: |
+                      # For a push to main or dev: the branch name plus the SHA
+                      type=ref,event=branch
+                      type=sha,prefix=sha-
+
+                      # For a release tag (v1.2.0): the version tags
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      # Only a stable release moves latest. A tag with a hyphen
+                      # (v1.2.0-rc.1) is a prerelease and must not reach every host
+                      # that pulls latest.
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+
+            - name: Apply the tags
+              run: |
+                  # The per-architecture digests become one multi-arch manifest list.
+                  mapfile -t args < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+                  if [ "${#args[@]}" -eq 0 ]; then
+                      echo "::error::no tags were computed for $IMAGE"
+                      exit 1
+                  fi
+                  mapfile -t digests < <(basename -a /tmp/digests/digests-*/*)
+                  for digest in "${digests[@]}"; do args+=("$IMAGE@sha256:$digest"); done
+                  echo "$IMAGE <- ${args[*]}"
+                  docker buildx imagetools create "${args[@]}"
+
+            - name: Inspect the published image
+              env:
+                  VERSION: ${{ steps.meta.outputs.version }}
+              run: docker buildx imagetools inspect "$IMAGE:$VERSION"

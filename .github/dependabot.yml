@@ -1,0 +1,35 @@
+version: 2
+
+# Only the actions. A pinned action does not age loudly -- it keeps working until the
+# runner drops the version, and then a workflow that nobody touched fails. One grouped
+# pull request a month is the cheapest way to notice.
+#
+# Noticing alone is not enough: this repository is maintained without pull requests,
+# so a monthly one would simply wait. dependabot-auto-merge.yml is the other half and
+# merges the pull request once its checks are green.
+#
+# npm is deliberately absent. The notifier has no runtime dependencies: what npm
+# installs is the toolchain -- TypeScript, Vitest, semantic-release -- and none of it
+# reaches the image. Security-relevant npm updates still arrive on their own:
+# Dependabot security updates need no configuration file.
+updates:
+    - package-ecosystem: github-actions
+      directory: "/"
+      # dev, not main. ci.yml runs on the pull request, but an action bump is mostly
+      # about actions ci.yml never touches -- docker/build-push-action, the artifact
+      # pair, metadata-action. Only build.yml exercises those, and it runs after a
+      # merge, not before one. Landing the bump on dev means the developer image is
+      # the one that breaks, and its smoke test says so.
+      target-branch: dev
+      schedule:
+          interval: monthly
+      # One pull request for all of them rather than one per action.
+      groups:
+          actions:
+              patterns: ["*"]
+      commit-message:
+          # Conventional Commits are enforced by .githooks/commit-msg, which Dependabot
+          # does not run -- the prefix has to be configured here. `ci` releases nothing.
+          prefix: "ci"
+      labels:
+          - dependencies

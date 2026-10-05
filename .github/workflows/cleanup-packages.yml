@@ -1,0 +1,115 @@
+name: Prune Registry
+
+on:
+    schedule:
+        - cron: "0 2 * * *" # Runs every night at 02:00
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Log what would be deleted, delete nothing"
+                type: boolean
+                default: true
+
+# The action is not safe to run twice against the same package, and the nightly
+# schedule and a manual run can otherwise meet. Not cancelling: aborting a run
+# halfway through a delete is the worse of the two outcomes.
+concurrency:
+    group: cleanup-images
+    cancel-in-progress: false
+
+jobs:
+    delete-old-packages:
+        runs-on: ubuntu-latest
+        permissions:
+            packages: write
+            contents: read
+
+        steps:
+            # dataaxiom/ghcr-cleanup-action instead of actions/delete-package-versions,
+            # because the latter does not know what a manifest child is. A multi-arch
+            # build pushes its per-architecture images and its attestations untagged;
+            # only the manifest list carries the tag. Deleting "untagged versions" from
+            # such a package therefore hollows out the tagged images: the tags still
+            # exist, every child behind them answers 404.
+            - name: Delete unwanted versions
+              uses: dataaxiom/ghcr-cleanup-action@v1
+              with:
+                  # **A new image has to be added here by hand.** The action touches
+                  # only the packages it is named, so one that is missing is neither
+                  # pruned nor protected by exclude-tags below.
+                  packages: shutdown-notifier
+
+                  # A child of a kept tag does not count as untagged here.
+                  delete-untagged: true
+                  keep-n-tagged: 10
+
+                  # Safety net for the pointers nobody may lose. main and dev are the
+                  # rolling images, latest the last release. The two version patterns
+                  # keep every release pullable -- a deleted 1.2.0 breaks whoever pinned
+                  # it, so release images are meant to accumulate.
+                  exclude-tags: latest,main,dev,*.*.*,*.*
+
+                  # Removes manifests whose children are gone. The excluded tags above
+                  # are left alone even when they are broken.
+                  delete-ghost-images: true
+                  delete-partial-images: true
+
+                  # Re-checks after the run that every multi-arch image still has all
+                  # of its platform children. It only *warns* -- the step below is what
+                  # makes that finding fail the run.
+                  validate: true
+
+                  # Manual runs default to a dry run; the nightly schedule passes no
+                  # input and deletes.
+                  dry-run: ${{ inputs.dry_run || false }}
+
+            # `validate: true` writes its finding into the log of a job that runs at
+            # two in the morning and is read by nobody. This step checks the same
+            # thing and fails, and a failing scheduled run is what GitHub sends a mail
+            # about.
+            #
+            # It resolves every child digest individually rather than trusting the
+            # index: a hollowed-out image still lists its platforms in the manifest
+            # list, and only fetching the child shows that it is gone.
+            - name: Log in to the Container registry
+              uses: docker/login-action@v4
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Verify the protected tags survived
+              run: |
+                  owner=${{ github.repository_owner }}
+                  rc=0
+
+                  verify() {
+                      local ref=$1 raw digests image bad=0 d
+                      if ! raw=$(docker buildx imagetools inspect --raw "$ref" 2>/dev/null); then
+                          # A tag that does not exist yet is not a defect: dev appears
+                          # only once dev was pushed, latest with the next release.
+                          echo "  $ref -- absent, nothing to verify"
+                          return 0
+                      fi
+                      digests=$(jq -r '.manifests[]?.digest // empty' <<< "$raw")
+                      if [ -z "$digests" ]; then
+                          echo "  $ref -- ok (single manifest)"
+                          return 0
+                      fi
+                      image=${ref%:*}
+                      for d in $digests; do
+                          if ! docker buildx imagetools inspect --raw "$image@$d" > /dev/null 2>&1; then
+                              echo "::error::$ref points at $d, which no longer exists"
+                              bad=1
+                          fi
+                      done
+                      if [ "$bad" -eq 0 ]; then
+                          echo "  $ref -- ok ($(wc -w <<< "$digests" | tr -d ' ') children)"
+                      fi
+                      return "$bad"
+                  }
+
+                  for tag in latest main dev; do
+                      verify "ghcr.io/$owner/shutdown-notifier:$tag" || rc=1
+                  done
+                  exit $rc

@@ -1,0 +1,156 @@
+name: Create Release
+
+# semantic-release derives the next version from the commit types since the last
+# tag, writes CHANGELOG.md and package.json, and pushes the tag. It publishes no
+# image itself; it starts build.yml for the tag and waits for it.
+#
+# A release is an action, not a side effect of pushing. Pushes to main and dev
+# publish the rolling :main and :dev images (build.yml) and nothing else; the
+# version number is created only from here, only on main, only on request.
+on:
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Dry run -- prints the next version, changes nothing"
+                type: boolean
+                default: true
+            bump:
+                description: "Version bump"
+                type: choice
+                options:
+                    - auto
+                    - major
+                default: auto
+
+# Two runs at once would read the same last tag and compute the same next
+# version. Not cancelling: a release that dies after the tag leaves the tag
+# without a matching image build.
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    # workflow_dispatch offers every branch in the UI. Releases come from main alone,
+    # so enforce it here rather than only documenting it -- and in front of the
+    # checks: the condition is known at dispatch, and failing after a full
+    # typecheck-and-test cycle would spend minutes to report it.
+    guard:
+        name: Only main may release
+        runs-on: ubuntu-latest
+        permissions: {}
+        steps:
+            - name: Reject any branch but main
+              if: github.ref_name != 'main'
+              env:
+                  REF_NAME: ${{ github.ref_name }}
+              run: |
+                  echo "::error::A release is only intended on 'main' (chosen: '$REF_NAME')."
+                  exit 1
+
+    checks:
+        needs: guard
+        uses: ./.github/workflows/ci.yml
+        # Stated explicitly, exactly as build.yml states it for the same call.
+        permissions:
+            contents: read
+
+    release:
+        needs: checks
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write # tag, release, CHANGELOG/package.json commit
+            issues: write # @semantic-release/github comments on issues ...
+            pull-requests: write # ... and on pull requests
+            actions: write # starts build.yml for the tag just created
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                  # semantic-release needs the full history and all tags to find the
+                  # last release. persist-credentials: false, because the git plugin
+                  # sets the remote itself using GITHUB_TOKEN.
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Set up Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: .nvmrc
+                  cache: npm
+
+            # See ci.yml: npm 10 and npm 11 do not write the same lockfile.
+            - name: Pin npm
+              run: npm i -g "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+
+            - name: Install dependencies
+              run: npm ci
+
+            # No build step: the checks job already built the project, and nothing
+            # is published to a package registry from here.
+            #
+            # FORCE_MAJOR is read by the analyzeCommitsCmd of @semantic-release/exec
+            # (see package.json). A BREAKING CHANGE footer alone raises the minor
+            # position; the major is reserved for this switch.
+            - name: Release
+              id: release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  FORCE_MAJOR: ${{ inputs.bump == 'major' }}
+              run: npx semantic-release ${{ inputs.dry_run && '--dry-run' || '' }}
+
+            # The tag comes from the successCmd of @semantic-release/exec, i.e. from
+            # semantic-release itself. successCmd does not run during a dry run, so
+            # the output stays empty there and nothing is started.
+            - name: No release was produced
+              if: ${{ !inputs.dry_run && steps.release.outputs.tag == '' }}
+              run: |
+                  echo "::error::No release-worthy commits were found."
+                  echo "Only feat:, fix:, perf: and revert: produce a version."
+                  echo "A release that was asked for and produced nothing is a failure, not a success."
+                  exit 1
+
+            # The tag push above goes out over GITHUB_TOKEN and therefore produces no
+            # push event -- build.yml would never see it. workflow_dispatch is the
+            # documented exception. Dispatched on the tag ref, not on main, so that
+            # github.ref in build.yml is refs/tags/... and the version and latest
+            # rules of docker/metadata-action apply.
+            - name: Build the image for the new tag
+              if: steps.release.outputs.tag != ''
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.release.outputs.tag }}
+              run: |
+                  gh workflow run build.yml --ref "$TAG"
+
+                  # `gh workflow run` reports nothing about the run it starts, so the
+                  # run has to be found. The dispatch is asynchronous.
+                  run_id=""
+                  for _ in $(seq 1 30); do
+                      run_id=$(gh run list --workflow=build.yml --branch "$TAG" \
+                          --event workflow_dispatch --json databaseId \
+                          --jq '[.[].databaseId] | max // empty')
+                      [ -n "$run_id" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$run_id" ]; then
+                      echo "::error::The image build was dispatched but no run appeared for $TAG."
+                      exit 1
+                  fi
+
+                  # Waiting rather than firing and forgetting: otherwise the release
+                  # goes green on a dispatch, and a build that fails afterwards leaves
+                  # a tag, a GitHub release and a changelog entry with no image.
+                  echo "Watching $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+                  gh run watch "$run_id" --exit-status
+
+            # The tag cannot be taken back from here, so say plainly what exists and
+            # what does not, instead of leaving a red job to be interpreted.
+            - name: Explain a half-finished release
+              if: failure() && steps.release.outputs.tag != ''
+              env:
+                  TAG: ${{ steps.release.outputs.tag }}
+              run: |
+                  echo "::error::$TAG exists as a tag, a GitHub release and a changelog entry, but its image does not."
+                  echo "Fix the cause, then re-run 'Build Images' on the tag: gh workflow run build.yml --ref $TAG"
+                  echo "No second release is needed -- the version is already created."

@@ -1,0 +1,27 @@
+# Everything the image needs is copied explicitly (the manifests, the tsconfigs, src/ and
+# config/template.json) -- anything else only slows down the context upload.
+
+# Reinstalled and rebuilt inside the image
+node_modules
+dist
+
+# Local secrets -- must never end up in an image
+.env
+
+# VCS and tooling
+.git
+.gitignore
+.github
+.githooks
+.vscode
+.idea
+.claude
+
+# Docs, samples and compose files -- not part of the image
+*.md
+samples
+compose*.yaml
+compose*.yml
+
+*.log
+.DS_Store
