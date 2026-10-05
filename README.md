@@ -297,3 +297,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 [src/template.ts](src/template.ts) is the template engine of the Keepalived Status Monitor
 (`shared/src/webhookTemplate.ts`), unchanged apart from the roots a path may start with. A
 change to the language belongs there first.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
