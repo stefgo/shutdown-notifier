@@ -197,7 +197,7 @@ jobs:
               run: |
                   for kind in scheduled reminder cancelled; do
                       docker run --rm "$IMAGE_REF" dist/index.js --test "$kind" \
-                          | jq -e --arg kind "shutdown.$kind" '.level and (.tags | index($kind))' > /dev/null
+                          | jq -e --arg kind "shutdown.$kind" '.level and .kind == $kind' > /dev/null
                       echo "shutdown.$kind rendered"
                   done
 
