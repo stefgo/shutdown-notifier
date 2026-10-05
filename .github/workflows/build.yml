@@ -174,17 +174,20 @@ jobs:
 
             # There is no tag to pull yet, so the image is addressed by digest --
             # more precise anyway: nothing is left for docker to choose.
+            # By name: one artefact, unpacked straight into the path.
             - name: Download the digest for this architecture
               uses: actions/download-artifact@v8
               with:
                   path: /tmp/digests
-                  pattern: digests-${{ matrix.arch }}
+                  name: digests-${{ matrix.arch }}
 
             - name: Resolve the digest
-              env:
-                  ARCH: ${{ matrix.arch }}
               run: |
-                  digest=$(basename /tmp/digests/digests-"$ARCH"/*)
+                  digest=$(basename /tmp/digests/*)
+                  if ! [[ $digest =~ ^[0-9a-f]{64}$ ]]; then
+                      echo "::error::no digest was handed over (found: '$digest')"
+                      exit 1
+                  fi
                   echo "IMAGE_REF=$IMAGE@sha256:$digest" >> "$GITHUB_ENV"
 
             # The notifier has no health route to ask. --test renders a sample event
@@ -260,11 +263,14 @@ jobs:
             IMAGE: ${{ needs.prepare.outputs.image }}
 
         steps:
+            # merge-multiple: the file names are the digests, and with one image there
+            # is nothing the directories would have to tell apart.
             - name: Download digests
               uses: actions/download-artifact@v8
               with:
                   path: /tmp/digests
                   pattern: digests-*
+                  merge-multiple: true
 
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@v4
@@ -302,7 +308,11 @@ jobs:
                       echo "::error::no tags were computed for $IMAGE"
                       exit 1
                   fi
-                  mapfile -t digests < <(basename -a /tmp/digests/digests-*/*)
+                  mapfile -t digests < <(basename -a /tmp/digests/*)
+                  if [ "${#digests[@]}" -ne 2 ]; then
+                      echo "::error::expected a digest per architecture, found ${#digests[@]}"
+                      exit 1
+                  fi
                   for digest in "${digests[@]}"; do args+=("$IMAGE@sha256:$digest"); done
                   echo "$IMAGE <- ${args[*]}"
                   docker buildx imagetools create "${args[@]}"
