@@ -69,6 +69,41 @@ describe("parseEventKind", () => {
 
 describe("config/template.json", () => {
     const source = fs.readFileSync(new URL("../config/template.json", import.meta.url), "utf8");
+    const body = (kind: (typeof EVENT_KINDS)[number]) =>
+        renderTemplate(JSON.parse(source), buildContext(sampleEvent(kind, NOW), "zeus"));
+
+    it("is a template the engine takes", () => {
+        expect(templateError(source)).toBeNull();
+    });
+
+    it("hands on what the event carries, with its types", () => {
+        expect(body("shutdown.scheduled")).toMatchObject({
+            source: "shutdown-notifier",
+            host: "zeus",
+            kind: "shutdown.scheduled",
+            level: "warning",
+            title: "Shutdown scheduled",
+            mode: "poweroff",
+            scheduledAt: "2026-10-05T20:10:00.000Z",
+            secondsUntil: 600,
+            wallMessage: "Maintenance",
+            timestamp: "2026-10-05T20:00:00.000Z",
+        });
+    });
+
+    it("has no schedule left after a cancellation", () => {
+        expect(body("shutdown.cancelled")).toMatchObject({
+            kind: "shutdown.cancelled",
+            level: "info",
+            mode: null,
+            scheduledAt: null,
+            secondsUntil: null,
+        });
+    });
+});
+
+describe("samples/ha-lognotifier/template.json", () => {
+    const source = fs.readFileSync(new URL("../samples/ha-lognotifier/template.json", import.meta.url), "utf8");
     const message = (kind: (typeof EVENT_KINDS)[number]) => {
         const body = renderTemplate(JSON.parse(source), buildContext(sampleEvent(kind, NOW), "zeus"));
         return body as { level: string; title: string; blocks: { rows: { label: string }[][] }[] };

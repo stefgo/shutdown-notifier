@@ -1,0 +1,53 @@
+{
+    "level": "{{event.level}}",
+    "title": {
+        "$join": [
+            {
+                "$if": "event.kind == 'shutdown.cancelled'",
+                "then": "✅",
+                "else": { "$if": "event.kind == 'shutdown.reminder'", "then": "⏰", "else": "⚠️" }
+            },
+            " {{host.name}}: {{event.title}}"
+        ]
+    },
+    "source": "shutdown-notifier",
+    "tags": ["shutdown", "{{event.kind}}", "{{host.name}}"],
+    "timestamp": "{{event.occurredAt}}",
+    "content": {
+        "$join": [
+            {
+                "$if": "event.kind == 'shutdown.cancelled'",
+                "then": "The scheduled shutdown of **{{host.name}}** was cancelled.",
+                "else": {
+                    "$if": "event.kind == 'shutdown.reminder'",
+                    "then": "**{{host.name}}** goes down in **{{event.remaining}}**.",
+                    "else": "A shutdown of **{{host.name}}** was scheduled, **{{event.remaining}}** from now."
+                }
+            },
+            { "$if": "event.wallMessage", "then": "> {{event.wallMessage}}" }
+        ],
+        "with": "\n\n"
+    },
+    "blocks": [
+        {
+            "type": "fields",
+            "rows": [
+                [
+                    { "label": "Host", "value": "{{host.name}}" },
+                    { "$if": "event.mode", "then": { "label": "Mode", "value": "{{event.mode}}" } }
+                ],
+                {
+                    "$if": "event.scheduledAt",
+                    "then": [
+                        { "label": "Shutdown at", "value": "{{event.scheduledAt}}", "format": "datetime" },
+                        { "label": "Time left", "value": "{{event.secondsUntil}}", "format": "duration" }
+                    ]
+                },
+                [
+                    { "label": "Event", "value": "{{event.kind}}" },
+                    { "label": "Noticed", "value": "{{event.occurredAt}}", "format": "datetime" }
+                ]
+            ]
+        }
+    ]
+}

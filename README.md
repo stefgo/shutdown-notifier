@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Europe/Berlin
-      - SHUTDOWN_NOTIFY_URL=https://ha.example.net/api/lognotifier/ingest/<channel token>
+      - SHUTDOWN_NOTIFY_URL=https://hooks.example.net/shutdown
       - SHUTDOWN_HOSTNAME=zeus
     volumes:
       - /run/systemd/shutdown:/run/systemd/shutdown:ro
@@ -39,10 +39,10 @@ services:
       # - ./config/template.json:/config/template.json:ro
 ```
 
-The image ships [config/template.json](config/template.json), a message for
-[Log Notifier](https://github.com/stefgo/ha-log-notifier) for Home Assistant; the URL is the
-ingest URL of a channel. For any other target, mount a template of your own over
-`/config/template.json`.
+The image ships [config/template.json](config/template.json), a flat JSON object with
+everything the event carries, written for no target in particular. For a target that expects
+a body of its own, mount a template over `/config/template.json` — [samples/](samples/) holds
+some to start from.
 
 The complete [compose.yaml](compose.yaml) builds the image from this repository and reads
 every setting from the environment, so the URL can live in a `.env` file next to it.
@@ -211,8 +211,8 @@ gives `[]`.
 
 ## Examples
 
-**[Log Notifier](https://github.com/stefgo/ha-log-notifier) for Home Assistant** — the
-template the image ships: [config/template.json](config/template.json).
+**[Log Notifier](https://github.com/stefgo/ha-log-notifier) for Home Assistant** —
+[samples/ha-lognotifier/template.json](samples/ha-lognotifier/template.json).
 `SHUTDOWN_NOTIFY_URL=https://<ha>/api/lognotifier/ingest/<channel token>`. Log Notifier reads
 the notifier's levels as its own and renders `content` as Markdown. Without the grid of
 fields below the text, it comes down to:
@@ -252,14 +252,18 @@ fields below the text, it comes down to:
 }
 ```
 
-**Your own endpoint**, with everything the event carries
+**Your own endpoint**, with everything the event carries — the template the image ships:
+[config/template.json](config/template.json).
 
 ```json
 {
     "source": "shutdown-notifier",
+    "id": "{{event.id}}",
     "host": "{{host.name}}",
     "kind": "{{event.kind}}",
     "level": "{{event.level}}",
+    "title": "{{event.title}}",
+    "message": "{{event.message}}",
     "mode": "{{event.mode}}",
     "scheduledAt": "{{event.scheduledAt}}",
     "secondsUntil": "{{event.secondsUntil}}",
