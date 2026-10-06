@@ -22,3 +22,7 @@ services:
       - /run/systemd/shutdown:/run/systemd/shutdown:ro
       # A template of your own, in place of the one the image ships:
       # - ./config/template.json:/config/template.json:ro
+
+networks:
+  none:
+    external: true
