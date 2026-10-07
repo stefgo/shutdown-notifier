@@ -11,8 +11,8 @@ COPY src ./src
 RUN npm run build
 
 # Runner Stage
-# The notifier has no runtime dependencies: Node alone watches the file and posts the
-# notification, so nothing but the build output goes into the image.
+# The notifier has no runtime dependencies: Node alone watches the file, posts the
+# notification and speaks MQTT, so nothing but the build output goes into the image.
 FROM gcr.io/distroless/nodejs22-debian12
 
 ENV NODE_ENV=production

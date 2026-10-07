@@ -13,11 +13,23 @@ export interface Config {
     /** How often the schedule is read without a change having been seen. 0 never does. */
     pollIntervalMs: number;
     /** The JSON file holding the body template. */
-    templateFile: string;
+    httpTemplateFile: string;
     /** Where the notification goes. Null logs the events without sending anything. */
-    notifyUrl: string | null;
-    notifyHeaders: Record<string, string>;
-    notifyTimeoutMs: number;
+    httpUrl: string | null;
+    httpHeaders: Record<string, string>;
+    httpTimeoutMs: number;
+    /** The broker the events are published to as well, `mqtt://` or `mqtts://`. Null publishes nothing. */
+    mqttUrl: string | null;
+    /** May hold placeholders. */
+    mqttTopic: string;
+    mqttUsername: string | null;
+    mqttPassword: string | null;
+    mqttClientId: string;
+    mqttQos: 0 | 1;
+    mqttRetain: boolean;
+    mqttTimeoutMs: number;
+    /** The JSON file holding the payload template. Needed once a broker is set. */
+    mqttTemplateFile: string | null;
     /** What a template reads as `host.name`. */
     hostname: string;
     logLevel: LogLevel;
@@ -54,6 +66,20 @@ function headers(env: Env, name: string): Record<string, string> {
     return parsed as Record<string, string>;
 }
 
+function qos(env: Env, name: string): 0 | 1 {
+    const raw = env[name]?.trim();
+    if (!raw) return 1;
+    if (raw !== "0" && raw !== "1") throw new Error(`${name}: "${raw}" is not 0 or 1`);
+    return raw === "0" ? 0 : 1;
+}
+
+function flag(env: Env, name: string): boolean {
+    const raw = env[name]?.trim().toLowerCase();
+    if (!raw) return false;
+    if (raw !== "true" && raw !== "false") throw new Error(`${name}: "${raw}" is not true or false`);
+    return raw === "true";
+}
+
 function logLevel(env: Env, name: string): LogLevel {
     const raw = env[name]?.trim().toLowerCase();
     if (!raw) return "info";
@@ -65,17 +91,33 @@ function logLevel(env: Env, name: string): LogLevel {
 
 /** Reads the configuration. Throws with a message naming the variable that is wrong. */
 export function loadConfig(env: Env = process.env): Config {
+    const hostname = env.SHUTDOWN_HOSTNAME?.trim() || os.hostname();
+    // Not trimmed: a password may well end with a blank.
+    const mqttUsername = env.SHUTDOWN_MQTT_USERNAME || null;
+    const mqttPassword = env.SHUTDOWN_MQTT_PASSWORD || null;
+    if (mqttPassword !== null && mqttUsername === null) {
+        throw new Error("SHUTDOWN_MQTT_PASSWORD: MQTT takes no password without SHUTDOWN_MQTT_USERNAME");
+    }
     return {
         monitorPath: (env.SHUTDOWN_MONITOR_PATH?.trim() || "/run/systemd/shutdown").replace(/\/+$/, "") || "/",
         monitorFile: env.SHUTDOWN_MONITOR_FILE?.trim() || "scheduled",
         notifyDelayMs: seconds(env, "SHUTDOWN_NOTIFY_DELAY", 3),
         reminderMs: seconds(env, "SHUTDOWN_REMEMBER_TIME", 300),
         pollIntervalMs: seconds(env, "SHUTDOWN_POLL_INTERVAL", 60),
-        templateFile: env.SHUTDOWN_NOTIFY_TEMPLATE_FILE?.trim() || "/config/template.json",
-        notifyUrl: env.SHUTDOWN_NOTIFY_URL?.trim() || null,
-        notifyHeaders: headers(env, "SHUTDOWN_NOTIFY_HEADERS"),
-        notifyTimeoutMs: seconds(env, "SHUTDOWN_NOTIFY_TIMEOUT", 10, 0.001),
-        hostname: env.SHUTDOWN_HOSTNAME?.trim() || os.hostname(),
+        httpTemplateFile: env.SHUTDOWN_HTTP_TEMPLATE_FILE?.trim() || "/config/template.json",
+        httpUrl: env.SHUTDOWN_HTTP_URL?.trim() || null,
+        httpHeaders: headers(env, "SHUTDOWN_HTTP_HEADERS"),
+        httpTimeoutMs: seconds(env, "SHUTDOWN_HTTP_TIMEOUT", 10, 0.001),
+        mqttUrl: env.SHUTDOWN_MQTT_URL?.trim() || null,
+        mqttTopic: env.SHUTDOWN_MQTT_TOPIC?.trim() || "shutdown-notifier/{{host.name}}",
+        mqttUsername,
+        mqttPassword,
+        mqttClientId: env.SHUTDOWN_MQTT_CLIENT_ID?.trim() || `shutdown-notifier-${hostname}`,
+        mqttQos: qos(env, "SHUTDOWN_MQTT_QOS"),
+        mqttRetain: flag(env, "SHUTDOWN_MQTT_RETAIN"),
+        mqttTimeoutMs: seconds(env, "SHUTDOWN_MQTT_TIMEOUT", 10, 0.001),
+        mqttTemplateFile: env.SHUTDOWN_MQTT_TEMPLATE_FILE?.trim() || null,
+        hostname,
         logLevel: logLevel(env, "SHUTDOWN_LOG_LEVEL"),
     };
 }

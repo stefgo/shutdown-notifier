@@ -9,12 +9,48 @@ describe("loadConfig", () => {
             notifyDelayMs: 3_000,
             reminderMs: 300_000,
             pollIntervalMs: 60_000,
-            templateFile: "/config/template.json",
-            notifyUrl: null,
-            notifyHeaders: {},
-            notifyTimeoutMs: 10_000,
+            httpTemplateFile: "/config/template.json",
+            httpUrl: null,
+            httpHeaders: {},
+            httpTimeoutMs: 10_000,
+            mqttUrl: null,
+            mqttTopic: "shutdown-notifier/{{host.name}}",
+            mqttUsername: null,
+            mqttPassword: null,
+            mqttQos: 1,
+            mqttRetain: false,
+            mqttTimeoutMs: 10_000,
+            mqttTemplateFile: null,
             logLevel: "info",
         });
+    });
+
+    it("names the MQTT client after the host", () => {
+        expect(loadConfig({ SHUTDOWN_HOSTNAME: "zeus" }).mqttClientId).toBe("shutdown-notifier-zeus");
+        expect(loadConfig({ SHUTDOWN_MQTT_CLIENT_ID: "notifier" }).mqttClientId).toBe("notifier");
+    });
+
+    it("reads how the broker is spoken to", () => {
+        const config = loadConfig({
+            SHUTDOWN_MQTT_URL: " mqtts://broker ",
+            SHUTDOWN_MQTT_USERNAME: "u",
+            SHUTDOWN_MQTT_PASSWORD: "p ",
+            SHUTDOWN_MQTT_QOS: "0",
+            SHUTDOWN_MQTT_RETAIN: "True",
+            SHUTDOWN_MQTT_TIMEOUT: "2.5",
+        });
+        expect(config).toMatchObject({
+            mqttUrl: "mqtts://broker",
+            mqttUsername: "u",
+            mqttPassword: "p ",
+            mqttQos: 0,
+            mqttRetain: true,
+            mqttTimeoutMs: 2_500,
+        });
+        expect(() => loadConfig({ SHUTDOWN_MQTT_TIMEOUT: "0" })).toThrow(/^SHUTDOWN_MQTT_TIMEOUT: /);
+        expect(() => loadConfig({ SHUTDOWN_MQTT_QOS: "2" })).toThrow(/^SHUTDOWN_MQTT_QOS: /);
+        expect(() => loadConfig({ SHUTDOWN_MQTT_RETAIN: "yes" })).toThrow(/^SHUTDOWN_MQTT_RETAIN: /);
+        expect(() => loadConfig({ SHUTDOWN_MQTT_PASSWORD: "p" })).toThrow(/^SHUTDOWN_MQTT_PASSWORD: /);
     });
 
     it("reads times in seconds", () => {
@@ -27,17 +63,17 @@ describe("loadConfig", () => {
     });
 
     it("reads the headers as a JSON object of texts", () => {
-        expect(loadConfig({ SHUTDOWN_NOTIFY_HEADERS: '{"X-Gotify-Key":"abc"}' }).notifyHeaders).toEqual({
+        expect(loadConfig({ SHUTDOWN_HTTP_HEADERS: '{"X-Gotify-Key":"abc"}' }).httpHeaders).toEqual({
             "X-Gotify-Key": "abc",
         });
-        expect(() => loadConfig({ SHUTDOWN_NOTIFY_HEADERS: "X-Key: abc" })).toThrow(/not valid JSON/);
-        expect(() => loadConfig({ SHUTDOWN_NOTIFY_HEADERS: "[]" })).toThrow(/takes a JSON object/);
-        expect(() => loadConfig({ SHUTDOWN_NOTIFY_HEADERS: '{"a":1}' })).toThrow(/"a" is not text/);
+        expect(() => loadConfig({ SHUTDOWN_HTTP_HEADERS: "X-Key: abc" })).toThrow(/not valid JSON/);
+        expect(() => loadConfig({ SHUTDOWN_HTTP_HEADERS: "[]" })).toThrow(/takes a JSON object/);
+        expect(() => loadConfig({ SHUTDOWN_HTTP_HEADERS: '{"a":1}' })).toThrow(/"a" is not text/);
     });
 
     it("names the variable that is wrong", () => {
         expect(() => loadConfig({ SHUTDOWN_NOTIFY_DELAY: "soon" })).toThrow(/^SHUTDOWN_NOTIFY_DELAY: /);
-        expect(() => loadConfig({ SHUTDOWN_NOTIFY_TIMEOUT: "0" })).toThrow(/^SHUTDOWN_NOTIFY_TIMEOUT: /);
+        expect(() => loadConfig({ SHUTDOWN_HTTP_TIMEOUT: "0" })).toThrow(/^SHUTDOWN_HTTP_TIMEOUT: /);
         expect(() => loadConfig({ SHUTDOWN_LOG_LEVEL: "loud" })).toThrow(/^SHUTDOWN_LOG_LEVEL: /);
     });
 });

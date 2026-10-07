@@ -1,8 +1,8 @@
 # Shutdown Notifier
 
-Watches the shutdown schedule of a systemd host and reports to a webhook when a shutdown is
-scheduled (`shutdown -h +10`, `shutdown -r 22:00`), shortly before it happens, and when it is
-cancelled (`shutdown -c`).
+Watches the shutdown schedule of a systemd host and reports to a webhook, to an MQTT broker
+or to both when a shutdown is scheduled (`shutdown -h +10`, `shutdown -r 22:00`), shortly
+before it happens, and when it is cancelled (`shutdown -c`).
 
 The notification is a **JSON body you write yourself**, in a template file with placeholders
 for the data of the event. The template language is the one of the
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Europe/Berlin
-      - SHUTDOWN_NOTIFY_URL=https://hooks.example.net/shutdown
+      - SHUTDOWN_HTTP_URL=https://hooks.example.net/shutdown
       - SHUTDOWN_HOSTNAME=zeus
     volumes:
       - /run/systemd/shutdown:/run/systemd/shutdown:ro
@@ -59,10 +59,18 @@ The images are built for `linux/amd64` and `linux/arm64`.
 
 | Variable | Default | Meaning |
 | :------- | :------ | :------ |
-| `SHUTDOWN_NOTIFY_URL` | – | Where the notification is posted. Without it the events are logged and nothing is sent. Placeholders work, as text. |
-| `SHUTDOWN_NOTIFY_HEADERS` | – | Further request headers as a JSON object, e.g. `{"X-Gotify-Key": "<token>"}`. Placeholders work in the values, as text. |
-| `SHUTDOWN_NOTIFY_TIMEOUT` | `10` | Seconds one attempt may take. |
-| `SHUTDOWN_NOTIFY_TEMPLATE_FILE` | `/config/template.json` | The body template. |
+| `SHUTDOWN_HTTP_URL` | – | Where the notification is posted. Without it nothing is posted. Placeholders work, as text. |
+| `SHUTDOWN_HTTP_HEADERS` | – | Further request headers as a JSON object, e.g. `{"X-Gotify-Key": "<token>"}`. Placeholders work in the values, as text. |
+| `SHUTDOWN_HTTP_TIMEOUT` | `10` | Seconds one attempt may take. |
+| `SHUTDOWN_HTTP_TEMPLATE_FILE` | `/config/template.json` | The body template. |
+| `SHUTDOWN_MQTT_URL` | – | The broker the events are published to: `mqtt://host[:1883]` or, with TLS, `mqtts://host[:8883]`. Without it nothing is published. See [MQTT](#mqtt). |
+| `SHUTDOWN_MQTT_TOPIC` | `shutdown-notifier/{{host.name}}` | The topic. Placeholders work, as text. |
+| `SHUTDOWN_MQTT_USERNAME`, `SHUTDOWN_MQTT_PASSWORD` | – | What the broker is logged in to with. |
+| `SHUTDOWN_MQTT_CLIENT_ID` | `shutdown-notifier-<host.name>` | The client id. |
+| `SHUTDOWN_MQTT_QOS` | `1` | `1` waits for the broker to acknowledge the message, `0` does not. |
+| `SHUTDOWN_MQTT_RETAIN` | `false` | `true` has the broker keep the last message for whoever subscribes later. |
+| `SHUTDOWN_MQTT_TIMEOUT` | `10` | Seconds one attempt may take, from connecting to the acknowledgement. |
+| `SHUTDOWN_MQTT_TEMPLATE_FILE` | – | The template of the MQTT payload. Required with `SHUTDOWN_MQTT_URL`; it may name the same file as `SHUTDOWN_HTTP_TEMPLATE_FILE`. |
 | `SHUTDOWN_HOSTNAME` | hostname of the process | What a template reads as `host.name`. Set it in a container, where the hostname is the container's. |
 | `SHUTDOWN_NOTIFY_DELAY` | `3` | Seconds a change has to settle before it is read. |
 | `SHUTDOWN_REMEMBER_TIME` | `300` | Seconds before the shutdown at which the reminder is sent. `0` sends none. |
@@ -72,8 +80,10 @@ The images are built for `linux/amd64` and `linux/arm64`.
 | `SHUTDOWN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `TZ` | – | The time zone of `event.scheduledAtLocal` and `event.occurredAtLocal`. |
 
-The template, the URL and the headers are checked at start-up. A broken one ends the process
-with a message that says where the mistake is, instead of failing on the first event.
+The templates, the URLs, the headers and the topic are checked at start-up. A broken one ends
+the process with a message that says where the mistake is, instead of failing on the first
+event. With neither `SHUTDOWN_HTTP_URL` nor `SHUTDOWN_MQTT_URL` the events are logged and
+nothing is sent.
 
 ## Delivery
 
@@ -84,21 +94,53 @@ with a message that says where the mistake is, instead of failing on the first e
 - A failure is logged with its reason, never with the URL or the headers.
 - On `SIGTERM` a delivery under way is finished before the process ends.
 
+## MQTT
+
+With `SHUTDOWN_MQTT_URL` every event is published to a broker as well — next to the webhook,
+or instead of it. The two do not wait for each other.
+
+```yaml
+    environment:
+      - SHUTDOWN_MQTT_URL=mqtt://broker.example.net
+      - SHUTDOWN_MQTT_TEMPLATE_FILE=/config/template.json
+      - SHUTDOWN_MQTT_USERNAME=notifier
+      - SHUTDOWN_MQTT_PASSWORD=<password>
+      - SHUTDOWN_MQTT_RETAIN=true
+```
+
+- The payload is the template `SHUTDOWN_MQTT_TEMPLATE_FILE` names, rendered as JSON. It is
+  written like the body template, and `/config/template.json`, the one the image ships, does
+  for both. A template that is a single text, such as `"{{event.kind}}"`, is published as
+  that text, without quotes.
+- The topic takes placeholders: `shutdown/{{host.name}}/{{event.kind}}` gives every event a
+  topic of its own. A topic that comes out empty or with `+` or `#` in it is not published to.
+- With `SHUTDOWN_MQTT_RETAIN=true` and one topic per host, the topic always holds what was
+  reported last: a subscriber that connects later still learns of a scheduled shutdown.
+- The notifier speaks MQTT 3.1.1 over TCP or TLS and connects for each message: connect,
+  publish, disconnect. There is no MQTT over WebSocket and no QoS 2.
+- `mqtts://` checks the broker's certificate. For one signed by a CA of your own, hand Node
+  the CA with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
+- When the broker cannot be reached, does not answer in time or says it is unavailable, the
+  message is tried twice more, after 1 s and 5 s. A refused login is not tried again.
+- Messages are published in the order the events happened. A failure is logged with its
+  reason, never with the URL or the credentials.
+
 ## Trying a template
 
-`--test` renders a sample event, prints the body and — when `SHUTDOWN_NOTIFY_URL` is set —
-sends it once, without retries. It takes the event to render: `scheduled` (the default),
-`reminder` or `cancelled`.
+`--test` renders a sample event, prints the body and — when `SHUTDOWN_HTTP_URL` is set —
+sends it once, without retries. With `SHUTDOWN_MQTT_URL` it prints the MQTT payload too and
+publishes it once. It takes the event to render: `scheduled` (the default), `reminder` or
+`cancelled`.
 
 ```sh
 # From the source tree
-SHUTDOWN_NOTIFY_TEMPLATE_FILE=config/template.json npm start -- --test reminder
+SHUTDOWN_HTTP_TEMPLATE_FILE=config/template.json npm start -- --test reminder
 
 # With the image
 docker compose run --rm shutdown-notifier dist/index.js --test cancelled
 ```
 
-The exit code is 1 when the target did not accept the delivery.
+The exit code is 1 when the target or the broker did not accept the delivery.
 
 ## Templates
 
@@ -213,7 +255,7 @@ gives `[]`.
 
 **[Log Notifier](https://github.com/stefgo/ha-log-notifier) for Home Assistant** —
 [samples/ha-lognotifier/template.json](samples/ha-lognotifier/template.json).
-`SHUTDOWN_NOTIFY_URL=https://<ha>/api/lognotifier/ingest/<channel token>`. Log Notifier reads
+`SHUTDOWN_HTTP_URL=https://<ha>/api/lognotifier/ingest/<channel token>`. Log Notifier reads
 the notifier's levels as its own and renders `content` as Markdown. Without the grid of
 fields below the text, it comes down to:
 
@@ -241,8 +283,8 @@ fields below the text, it comes down to:
 }
 ```
 
-**Gotify** — `SHUTDOWN_NOTIFY_URL=https://gotify.example.com/message`,
-`SHUTDOWN_NOTIFY_HEADERS={"X-Gotify-Key": "<app token>"}`
+**Gotify** — `SHUTDOWN_HTTP_URL=https://gotify.example.com/message`,
+`SHUTDOWN_HTTP_HEADERS={"X-Gotify-Key": "<app token>"}`
 
 ```json
 {
@@ -281,7 +323,7 @@ npm run typecheck
 npm run build     # dist/
 
 # Run against a directory of your own instead of /run/systemd/shutdown
-SHUTDOWN_MONITOR_PATH=/tmp/shutdown SHUTDOWN_NOTIFY_TEMPLATE_FILE=config/template.json npm start
+SHUTDOWN_MONITOR_PATH=/tmp/shutdown SHUTDOWN_HTTP_TEMPLATE_FILE=config/template.json npm start
 ```
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/);
