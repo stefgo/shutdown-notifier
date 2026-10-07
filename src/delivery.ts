@@ -3,7 +3,7 @@ import { logger } from "./logger.js";
 import { renderTemplate, renderTemplateText } from "./template.js";
 
 /** The waits before the second and the third attempt. */
-const RETRY_DELAYS_MS = [1_000, 5_000];
+export const RETRY_DELAYS_MS = [1_000, 5_000];
 
 /** How much of a target's answer is kept, to show why it refused. */
 const RESPONSE_PREVIEW_CHARS = 500;
@@ -38,7 +38,7 @@ function retryable(delivery: Delivery): boolean {
     return delivery.status === null || delivery.status >= 500 || delivery.status === 429;
 }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Renders the template for an event and posts the result to the target. */
 export class Notifier {
@@ -103,7 +103,7 @@ export class Notifier {
 
     private async deliver(event: ShutdownEvent): Promise<void> {
         if (!this.options.url) {
-            logger.debug("No notify URL, nothing sent", { kind: event.kind });
+            logger.debug("No HTTP URL, nothing sent", { kind: event.kind });
             return;
         }
         let request: NotifyRequest;
