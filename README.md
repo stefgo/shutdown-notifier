@@ -5,8 +5,9 @@ or to both when a shutdown is scheduled (`shutdown -h +10`, `shutdown -r 22:00`)
 before it happens, and when it is cancelled (`shutdown -c`).
 
 The notification is a **JSON body you write yourself**, in a template file with placeholders
-for the data of the event. The template language is the one of the
-[Keepalived Status Monitor](https://github.com/stefgo/keepalived-status-monitor) webhooks.
+for the data of the event. The template language is
+[js-template-engine](https://github.com/stefgo/js-template-engine), the one the webhooks of the
+[Keepalived Status Monitor](https://github.com/stefgo/keepalived-status-monitor) use.
 
 ## How it works
 
@@ -45,7 +46,8 @@ a body of its own, mount a template over `/config/template.json` — [samples/](
 some to start from.
 
 The complete [compose.yaml](compose.yaml) builds the image from this repository and reads
-every setting from the environment, so the URL can live in a `.env` file next to it.
+every setting from the environment, so the URL can live in a `.env` file next to it. Building
+needs `NPM_TOKEN` in the environment, see [Development](#development).
 
 | Tag | Is |
 | :-- | :- |
@@ -316,7 +318,13 @@ fields below the text, it comes down to:
 
 ## Development
 
+The template engine comes from GitHub Packages, which wants a token even for a public
+package. `NPM_TOKEN` has to hold one that may read packages — for `npm install` and for
+`docker compose build` alike:
+
 ```sh
+export NPM_TOKEN=$(gh auth token)   # or a personal access token with read:packages
+
 npm install
 npm test          # vitest
 npm run typecheck
@@ -340,9 +348,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 | Prune Registry | [cleanup-packages.yml](.github/workflows/cleanup-packages.yml) | Nightly: removes old `sha-*` images and what a failed build left behind. |
 | Merge Dependency Updates | [dependabot-auto-merge.yml](.github/workflows/dependabot-auto-merge.yml) | Merges Dependabot's monthly update of the actions once its checks are green. |
 
-[src/template.ts](src/template.ts) is the template engine of the Keepalived Status Monitor
-(`shared/src/webhookTemplate.ts`), unchanged apart from the roots a path may start with. A
-change to the language belongs there first.
+The template language is not part of this repository: it is
+[`@stefgo/js-template-engine`](https://github.com/stefgo/js-template-engine), and a change to
+the language belongs there. [src/template.ts](src/template.ts) only names the roots a path may
+start with.
 
 ## License
 

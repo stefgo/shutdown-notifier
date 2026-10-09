@@ -42,6 +42,7 @@ jobs:
         uses: ./.github/workflows/ci.yml
         permissions:
             contents: read
+            packages: read # ci.yml installs @stefgo/js-template-engine from GitHub Packages
 
     # The single source of the image name.
     prepare:
@@ -112,6 +113,11 @@ jobs:
                   context: .
                   file: ./Dockerfile
                   platforms: ${{ matrix.platform }}
+                  # GitHub Packages refuses anonymous reads even of a public package.
+                  # GITHUB_TOKEN is enough to read it and, unlike a personal access
+                  # token, never expires.
+                  secrets: |
+                      npm_token=${{ secrets.GITHUB_TOKEN }}
                   labels: ${{ steps.meta.outputs.labels }}
                   # One cache per architecture, or the two jobs would overwrite each
                   # other's layers.
