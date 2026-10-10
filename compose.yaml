@@ -1,7 +1,12 @@
 services:
   shutdown-notifier:
     container_name: shutdown-notifier
-    build: .
+    build:
+      context: .
+      # The build installs @stefgo/js-template-engine from GitHub Packages, which wants a
+      # token even for a public package: NPM_TOKEN, a token with read:packages.
+      secrets:
+        - npm_token
     image: shutdown-notifier
     restart: unless-stopped
     environment:
@@ -35,3 +40,7 @@ services:
 networks:
   none:
     external: true
+
+secrets:
+  npm_token:
+    environment: NPM_TOKEN

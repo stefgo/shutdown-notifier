@@ -19,6 +19,9 @@
         "test": "vitest run",
         "test:watch": "vitest"
     },
+    "dependencies": {
+        "@stefgo/js-template-engine": "1.0.0"
+    },
     "devDependencies": {
         "@commitlint/cli": "^21.2.3",
         "@commitlint/config-conventional": "^21.2.3",

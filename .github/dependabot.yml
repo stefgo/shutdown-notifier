@@ -8,9 +8,10 @@ version: 2
 # so a monthly one would simply wait. dependabot-auto-merge.yml is the other half and
 # merges the pull request once its checks are green.
 #
-# npm is deliberately absent. The notifier has no runtime dependencies: what npm
-# installs is the toolchain -- TypeScript, Vitest, semantic-release -- and none of it
-# reaches the image. Security-relevant npm updates still arrive on their own:
+# npm is deliberately absent. The one runtime dependency is the template engine,
+# @stefgo/js-template-engine, pinned to an exact version and raised by hand; the rest
+# of what npm installs is the toolchain -- TypeScript, Vitest, semantic-release -- and
+# none of it reaches the image. Security-relevant npm updates still arrive on their own:
 # Dependabot security updates need no configuration file.
 updates:
     - package-ecosystem: github-actions

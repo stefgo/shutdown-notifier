@@ -53,6 +53,7 @@ jobs:
         # Stated explicitly, exactly as build.yml states it for the same call.
         permissions:
             contents: read
+            packages: read # ci.yml installs @stefgo/js-template-engine from GitHub Packages
 
     release:
         needs: checks
@@ -61,6 +62,7 @@ jobs:
             contents: write # tag, release, CHANGELOG/package.json commit
             issues: write # @semantic-release/github comments on issues ...
             pull-requests: write # ... and on pull requests
+            packages: read # .npmrc resolves the @stefgo scope from GitHub Packages
             actions: write # starts build.yml for the tag just created
 
         steps:
@@ -84,6 +86,8 @@ jobs:
               run: npm i -g "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
 
             - name: Install dependencies
+              env:
+                  NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: npm ci
 
             # No build step: the checks job already built the project, and nothing
