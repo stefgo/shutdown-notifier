@@ -10,7 +10,7 @@ version: 2
 #
 # npm is deliberately absent. The one runtime dependency is the template engine,
 # @stefgo/js-template-engine, pinned to an exact version and raised by hand; the rest
-# of what npm installs is the toolchain -- TypeScript, Vitest, semantic-release -- and
+# of what npm installs is the toolchain -- TypeScript, Vitest, commitlint -- and
 # none of it reaches the image. Security-relevant npm updates still arrive on their own:
 # Dependabot security updates need no configuration file.
 updates:
