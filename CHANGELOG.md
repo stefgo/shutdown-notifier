@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/stefgo/shutdown-notifier/compare/v1.0.0...v1.0.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **template:** Release the image built on @stefgo/js-template-engine ([a9624cf](https://github.com/stefgo/shutdown-notifier/commit/a9624cf6bc546db974865b3e2028229f7b4eada5))
+
 # [1.0.0](https://github.com/stefgo/shutdown-notifier/compare/v0.0.1...v1.0.0) (2026-10-07)
 
 
