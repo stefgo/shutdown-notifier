@@ -52,6 +52,7 @@ needs `NPM_TOKEN` in the environment, see [Development](#development).
 | Tag | Is |
 | :-- | :- |
 | `latest`, `1.2.3`, `1.2` | A release. |
+| `1.3.0-beta.1` | A beta, released from `dev`. It moves neither `latest` nor `1.3`. |
 | `main` | The state of `main`, rebuilt on every push. |
 | `dev` | The state of `dev`, for trying out what is not released yet. |
 
@@ -338,13 +339,27 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 `npm install` activates the hook that checks them. A breaking change is marked with a
 `BREAKING CHANGE:` footer, not with `!`.
 
+### Releases
+
+A release is started by hand with the *Create Release* workflow: on `main` for a release, on
+`dev` for a beta. The version comes from the commit types (`feat:` raises the minor position,
+`fix:` the patch position) or from the step chosen at the start. Its dry run, which is the
+default, shows the version and the complete notes and changes nothing.
+
+Every release is described by hand in [.release/next.md](.release/next.md): what is new and
+what an upgrade needs. The text is placed above the generated list of commits, and a release
+without it is refused. A beta keeps the text, the release from `main` empties the file again.
+
+`dev` is merged into `main` with its history, not squashed or rebased -- the workflow finds a
+version through the tags a branch contains, and refuses a release whose beta it cannot find.
+
 ### Workflows
 
 | Workflow | File | Does |
 | :------- | :--- | :--- |
 | Check Code | [ci.yml](.github/workflows/ci.yml) | Build, tests and typecheck, on every branch and pull request. |
 | Build Images | [build.yml](.github/workflows/build.yml) | Builds the image on a push to `main` or `dev` and for a release tag, starts it, and tags it only when it reported a shutdown. |
-| Create Release | [release.yml](.github/workflows/release.yml) | Started by hand on `main`: derives the version from the commits since the last tag, writes `CHANGELOG.md`, tags, and has the image built. `feat:` raises the minor position, `fix:` the patch position. |
+| Create Release | [release.yml](.github/workflows/release.yml) | Started by hand on `main` (a release) or `dev` (a beta): takes the version from the commits since the last tag or from the step chosen, writes `CHANGELOG.md`, tags, and has the image built. The workflow itself is shared, see [release-workflows](https://github.com/stefgo/release-workflows). |
 | Prune Registry | [cleanup-packages.yml](.github/workflows/cleanup-packages.yml) | Nightly: removes old `sha-*` images and what a failed build left behind. |
 | Merge Dependency Updates | [dependabot-auto-merge.yml](.github/workflows/dependabot-auto-merge.yml) | Merges Dependabot's monthly update of the actions once its checks are green. |
 
