@@ -119,6 +119,11 @@ or instead of it. The two do not wait for each other.
   topic of its own. A topic that comes out empty or with `+` or `#` in it is not published to.
 - With `SHUTDOWN_MQTT_RETAIN=true` and one topic per host, the topic always holds what was
   reported last: a subscriber that connects later still learns of a scheduled shutdown.
+  The broker hands that message to every subscriber again each time it subscribes, after a
+  restart of the broker as well. A subscriber that turns every message into a notification,
+  such as a log or a chat, shows an old event as a new one, so leave retain off for such a
+  subscriber. To remove a retained message, publish an empty one with the retain flag to its
+  topic: `mosquitto_pub -t '<topic>' -r -n`.
 - The notifier speaks MQTT 3.1.1 over TCP or TLS and connects for each message: connect,
   publish, disconnect. There is no MQTT over WebSocket and no QoS 2.
 - `mqtts://` checks the broker's certificate. For one signed by a CA of your own, hand Node
